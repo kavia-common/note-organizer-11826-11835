@@ -18,12 +18,15 @@ function AppShell() {
     updateNote,
     deleteNote,
     categories,
+    loading,
+    lastError,
   } = useNotes();
 
   const [selectedId, setSelectedId] = useState(null);
   const [query, setQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   // Filter and search derived list
   const filtered = useMemo(() => {
@@ -57,14 +60,19 @@ function AppShell() {
     setIsEditorOpen(true);
   };
 
-  const onSave = (payload) => {
-    if (selectedNote) {
-      updateNote(selectedNote.id, payload);
-    } else {
-      const newId = addNote(payload);
-      setSelectedId(newId);
+  const onSave = async (payload) => {
+    setBusy(true);
+    try {
+      if (selectedNote) {
+        await updateNote(selectedNote.id, payload);
+      } else {
+        const newId = await addNote(payload);
+        setSelectedId(newId);
+      }
+      setIsEditorOpen(false);
+    } finally {
+      setBusy(false);
     }
-    setIsEditorOpen(false);
   };
 
   const onCancel = () => {
@@ -76,11 +84,16 @@ function AppShell() {
     setIsEditorOpen(true);
   };
 
-  const onDelete = (id) => {
-    deleteNote(id);
-    if (selectedId === id) {
-      setSelectedId(null);
-      setIsEditorOpen(false);
+  const onDelete = async (id) => {
+    setBusy(true);
+    try {
+      await deleteNote(id);
+      if (selectedId === id) {
+        setSelectedId(null);
+        setIsEditorOpen(false);
+      }
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -99,10 +112,17 @@ function AppShell() {
         />
         <main className="main">
           <div className="main-inner">
-            {!isEditorOpen && filtered.length === 0 && (
+            {loading && <div className="empty"><h3>Loading notes…</h3></div>}
+            {!loading && lastError && (
+              <div className="empty">
+                <h3>Failed to load notes</h3>
+                <p>Please check your Supabase configuration and try again.</p>
+              </div>
+            )}
+            {!loading && !isEditorOpen && filtered.length === 0 && (
               <EmptyState onCreate={onCreate} />
             )}
-            {!isEditorOpen && filtered.length > 0 && (
+            {!loading && !isEditorOpen && filtered.length > 0 && (
               <NoteList
                 notes={filtered}
                 onSelect={onSelectNote}
@@ -110,12 +130,15 @@ function AppShell() {
               />
             )}
             {isEditorOpen && (
-              <NoteEditor
-                key={selectedNote ? selectedNote.id : 'new'}
-                initialNote={selectedNote}
-                onSave={onSave}
-                onCancel={onCancel}
-              />
+              <div>
+                {busy && <div className="empty" style={{ marginBottom: 12 }}><p>Saving…</p></div>}
+                <NoteEditor
+                  key={selectedNote ? selectedNote.id : 'new'}
+                  initialNote={selectedNote}
+                  onSave={onSave}
+                  onCancel={onCancel}
+                />
+              </div>
             )}
           </div>
         </main>

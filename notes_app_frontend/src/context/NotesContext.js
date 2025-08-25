@@ -1,86 +1,70 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { generateId, nowTs } from '../utils/id';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { fetchNotes, createNote, updateNoteById, deleteNoteById } from '../services/notesService';
 
 // PUBLIC_INTERFACE
 export const NotesContext = createContext(null);
 
 /**
  * PUBLIC_INTERFACE
- * NotesProvider wraps children with notes state, persistence, and CRUD methods.
+ * NotesProvider wraps children with Supabase-backed notes state and CRUD methods.
+ * It fetches notes on mount and exposes async CRUD functions.
  */
 export function NotesProvider({ children }) {
   const [notes, setNotes] = useState([]);
-  const didLoad = useRef(false);
+  const [loading, setLoading] = useState(true);
+  const [lastError, setLastError] = useState(null);
 
-  // Load from localStorage once
+  // Initial load from Supabase
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem('notes.v1');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setNotes(parsed.map(n => ({ ...n, updatedAt: new Date(n.updatedAt).getTime() })));
-      } else {
-        // Seed with a sample note for first run
-        setNotes([
-          {
-            id: generateId(),
-            title: 'Welcome to Notes',
-            content: 'Create, search, and manage your notes.\nUse the + New Note button to get started.',
-            category: 'General',
-            updatedAt: nowTs(),
-          },
-        ]);
+    let active = true;
+    (async () => {
+      setLoading(true);
+      setLastError(null);
+      try {
+        const data = await fetchNotes();
+        if (active) setNotes(data);
+      } catch (e) {
+        if (active) setLastError(e);
+        // eslint-disable-next-line no-console
+        console.error('Failed to fetch notes from Supabase:', e);
+      } finally {
+        if (active) setLoading(false);
       }
-    } catch {
-      // ignore corrupted storage
-    } finally {
-      didLoad.current = true;
-    }
+    })();
+    return () => {
+      active = false;
+    };
   }, []);
 
-  // Persist to localStorage
-  useEffect(() => {
-    if (!didLoad.current) return;
-    try {
-      localStorage.setItem('notes.v1', JSON.stringify(notes));
-    } catch {
-      // ignore quota errors
-    }
-  }, [notes]);
-
   // PUBLIC_INTERFACE
-  const addNote = ({ title, content, category }) => {
-    const id = generateId();
-    const n = {
-      id,
-      title: title?.trim() || 'Untitled',
-      content: content || '',
-      category: category?.trim() || 'General',
-      updatedAt: nowTs(),
-    };
-    setNotes(prev => [n, ...prev]);
-    return id;
+  const addNote = async ({ title, content, category }) => {
+    /**
+     * Create a note in Supabase and update local state.
+     * Returns the created note id.
+     */
+    setLastError(null);
+    const newNote = await createNote({ title, content, category });
+    setNotes(prev => [newNote, ...prev]);
+    return newNote.id;
   };
 
   // PUBLIC_INTERFACE
-  const updateNote = (id, { title, content, category }) => {
-    setNotes(prev =>
-      prev.map(n =>
-        n.id === id
-          ? {
-              ...n,
-              title: title?.trim() || 'Untitled',
-              content: content ?? n.content,
-              category: category?.trim() || 'General',
-              updatedAt: nowTs(),
-            }
-          : n
-      )
-    );
+  const updateNote = async (id, { title, content, category }) => {
+    /**
+     * Update a note in Supabase and update local state.
+     */
+    setLastError(null);
+    const updated = await updateNoteById(id, { title, content, category });
+    setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
   };
 
   // PUBLIC_INTERFACE
-  const deleteNote = (id) => {
+  const deleteNote = async (id) => {
+    /**
+     * Delete a note in Supabase and update local state.
+     */
+    setLastError(null);
+    await deleteNoteById(id);
     setNotes(prev => prev.filter(n => n.id !== id));
   };
 
@@ -90,8 +74,16 @@ export function NotesProvider({ children }) {
   }, [notes]);
 
   const value = useMemo(
-    () => ({ notes, addNote, updateNote, deleteNote, categories }),
-    [notes, addNote, updateNote, deleteNote, categories]
+    () => ({
+      notes,
+      addNote,
+      updateNote,
+      deleteNote,
+      categories,
+      loading,
+      lastError,
+    }),
+    [notes, categories, loading, lastError]
   );
 
   return <NotesContext.Provider value={value}>{children}</NotesContext.Provider>;
